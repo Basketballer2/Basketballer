@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>3D Basketball Timed Shot Game with Dribble & Highlight</title>
+<style>
+body {
+background: #87ceeb;
+margin: 0;
+overflow: hidden;
+font-family: Arial, sans-serif;
+user-select: none;
+display: flex;
+justify-content: center;
+align-items: center;
+height: 100vh;
+}
+canvas {
+background: #2e8b57;
+border: 3px solid #000;
+border-radius: 10px;
+display: block;
+}
+#score, #chosenLegend, #distanceDisplay, #instructions {
+position: absolute;
+color: white;
+font-weight: bold;
+text-shadow: 0 0 3px black;
+user-select: none;
+}
+#score { top: 20px; left: 20px; font-size: 24px; }
+#chosenLegend { top: 60px; left: 20px; font-size: 20px; }
+#distanceDisplay { top: 90px; left: 20px; font-size: 18px; }
+#instructions {
+bottom: 20px;
+width: 100%;
+text-align: center;
+font-size: 18px;
+display: none; /* hide initially */
+}
+#powerBarContainer {
+position: absolute;
+bottom: 80px;
+left: 50%;
+transform: translateX(-50%);
+width: 300px;
+height: 30px;
+background: #444;
+border-radius: 10px;
+border: 2px solid #222;
+display: none;
+}
+#powerBar {
+height: 100%;
+width: 0;
+background: linear-gradient(90deg, orange, red);
+border-radius: 10px;
+}
+#startScreen {
+position: absolute;
+background: rgba(0,0,0,0.85);
+top: 0; left: 0; right: 0; bottom: 0;
+display: flex;
+flex-direction: column;
+justify-content: center;
+align-items: center;
+color: white;
+font-weight: bold;
+font-size: 24px;
+z-index: 10;
+}
+.legend-button {
+background: #222;
+border: 2px solid orange;
+margin: 7px;
+padding: 15px 30px;
+border-radius: 10px;
+cursor: pointer;
+font-size: 20px;
+width: 270px;
+transition: background 0.3s;
+}
+.legend-button:hover {
+background: orange;
+color: black;
+}
+#startButton {
+margin-top: 20px;
+padding: 15px 40px;
+font-size: 22px;
+border-radius: 10px;
+cursor: pointer;
+background: orange;
+border: none;
+color: black;
+font-weight: bold;
+display: none; /* hidden initially */
+}
+#startButton:hover {
+background: #ff9900;
+}
+</style>
+</head>
+<body>
+
+<div id="startScreen">
+<div>Select Your NBA Legend</div>
+<button class="legend-button" data-name="Michael Jordan" data-power="1.1">Michael Jordan</button>
+<button class="legend-button" data-name="Kobe Bryant" data-power="1.0">Kobe Bryant</button>
+<button class="legend-button" data-name="LeBron James" data-power="0.9">LeBron James</button>
+<button class="legend-button" data-name="Stephen Curry" data-power="1.15">Stephen Curry</button>
+<button class="legend-button" data-name="Shaquille O'Neal" data-power="0.8">Shaquille O'Neal</button>
+<button class="legend-button" data-name="Tim Duncan" data-power="1.05">Tim Duncan</button>
+<button class="legend-button" data-name="Larry Bird" data-power="1.12">Larry Bird</button>
+<button class="legend-button" data-name="Magic Johnson" data-power="1.0">Magic Johnson</button>
+
+<button id="startButton">Start Game</button>
+</div>
+
+<canvas id="gameCanvas" width="600" height="450"></canvas>
+<div id="score">Score: 0</div>
+<div id="chosenLegend"></div>
+<div id="distanceDisplay"></div>
+<div id="powerBarContainer">
+<div id="powerBar"></div>
+</div>
+<div id="instructions">
+Use WASD or Left/Right arrows to move (W/S forward/back, A/D left/right).<br>
+Spacebar to dribble.<br>
+Click once to start power bar, click again to shoot/dunk!
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreDisplay = document.getElementById('score');
+const chosenLegendDisplay = document.getElementById('chosenLegend');
+const distanceDisplay = document.getElementById('distanceDisplay');
+const powerBarContainer = document.getElementById('powerBarContainer');
+const powerBar = document.getElementById('powerBar');
+const instructions = document.getElementById('instructions');
+const startScreen = document.getElementById('startScreen');
+const legendButtons = document.querySelectorAll('.legend-button');
+const startButton = document.getElementById('startButton');
+
+let score = 0;
+let chosenLegend = null;
+let gameStarted = false;
+
+// Court parameters for perspective
+const courtWidth = 400; // visible court width at closest point
+const courtLength = 600; // depth (z-axis length)
+const vanishingPoint = { x: canvas.width / 2, y: 100 };
+
+// Hoop position in 3D space
+const hoop3D = { x: 0, y: 0, z: courtLength }; // centered x=0, at far end
+
+// Player starts near bottom (z=50)
+let player = {
+x: 0,
+y: 0,
+z: 50, // distance from hoop (0 = closest)
+radius: 15,
+};
+
+// Ball properties in 3D coords
+let ball = {
+x: player.x,
+y: 0,
+z: player.z,
+vx: 0,
+vy: 0,
+vz: 0,
+isMoving: false,
+successShot: false,
+radius: 15,
+dribbleOffsetY: 0,
+dribbleDirection: 1,
+isDribbling: false,
+};
+
+// Power bar vars
+let power = 0;
+let powerDirection = 1;
+let powerBarActive = false;
+let powerInterval = null;
+
+// Movement flags
+const keys = { left: false, right: false, up: false, down: false };
+
+// Controls boundaries (x and z-axis)
+const playerMinX = -courtWidth / 2 + 20;
+const playerMaxX = courtWidth / 2 - 20;
+const playerMinZ = 10;
+const playerMaxZ = courtLength - 10;
+
+// Movement speed
+const moveSpeed = 4;
+
+// Legend selection
+legendButtons.forEach(button => {
+button.addEventListener('click', () => {
+// Save chosen legend info
+chosenLegend = {
+name: button.dataset.name,
+power: parseFloat(button.dataset.power),
+};
+chosenLegendDisplay.textContent = `Legend: ${chosenLegend.name}`;
+
+// Highlight selected button visually
+legendButtons.forEach(btn => {
+btn.style.background = '#222';
+btn.style.color = 'white';
+});
+button.style.background = 'orange';
+button.style.color = 'black';
+
+// Show start button now
+startButton.style.display = 'inline-block';
+});
+});
+
+startButton.addEventListener('click', () => {
+if (!chosenLegend) return; // Safety check
+
+// Hide start screen
+startScreen.style.display = 'none';
+
+// Show instructions
+instructions.style.display = 'block';
+
+// Set game started flag
+gameStarted = true;
